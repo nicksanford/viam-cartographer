@@ -29,6 +29,21 @@ viam_carto_config viam_carto_config_setup() {
     return vcc;
 }
 
+viam_carto_config viam_carto_config_no_sensors_setup() {
+    struct viam_carto_config vcc;
+    vcc.map_rate_sec = 1;
+    vcc.mode = VIAM_CARTO_LOCALIZING;
+    vcc.lidar_config = VIAM_CARTO_THREE_D;
+    std::string data_dir = "/tmp/some/direcory";
+    std::string component_reference = "some component refereance";
+    vcc.data_dir = bfromcstr(data_dir.c_str());
+    vcc.component_reference = bfromcstr(component_reference.c_str());
+    int sensors_len = 0;
+    vcc.sensors_len = sensors_len;
+    vcc.sensors = nullptr;
+    return vcc;
+}
+
 void viam_carto_config_teardown(viam_carto_config vcc) {
     BOOST_TEST(bdestroy(vcc.data_dir) == BSTR_OK);
     BOOST_TEST(bdestroy(vcc.component_reference) == BSTR_OK);
@@ -57,16 +72,35 @@ viam_carto_algo_config viam_carto_algo_config_setup() {
 
 BOOST_AUTO_TEST_SUITE(CartoFacadeCPPAPI)
 
+BOOST_AUTO_TEST_CASE(CartoFacade_init_validate) {
+    char *errmsg = nullptr;
+
+    const viam_carto *vc;
+    struct viam_carto_config vcc = viam_carto_config_no_sensors_setup();
+    struct viam_carto_algo_config ac = viam_carto_algo_config_setup();
+    BOOST_TEST(viam_carto_init(NULL, vcc, ac, &errmsg) == VIAM_CARTO_VC_INVALID);
+    BOOST_TEST(errmsg == "viam_carto pointer should not be NULL");
+    errmsg = nullptr;
+
+    BOOST_TEST(viam_carto_init(&vc, vcc, ac, &errmsg) == VIAM_CARTO_SENSORS_LIST_EMPTY);
+    BOOST_TEST(errmsg == nullptr);
+
+    viam_carto_config_teardown(vcc);
+}
+
 BOOST_AUTO_TEST_CASE(CartoFacade_init_terminate) {
     char *errmsg = nullptr;
+
     const viam_carto *vc;
     struct viam_carto_config vcc = viam_carto_config_setup();
     struct viam_carto_algo_config ac = viam_carto_algo_config_setup();
+
     BOOST_TEST(viam_carto_init(&vc, vcc, ac, &errmsg) == VIAM_CARTO_SUCCESS);
     BOOST_TEST(errmsg == nullptr);
 
     BOOST_TEST(viam_carto_terminate(&vc, &errmsg) == VIAM_CARTO_SUCCESS);
     BOOST_TEST(errmsg == nullptr);
+
     viam_carto_config_teardown(vcc);
 }
 

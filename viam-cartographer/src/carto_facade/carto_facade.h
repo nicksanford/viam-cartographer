@@ -8,6 +8,7 @@
 
 #include "bstrlib.h"
 #include "bstrwrap.h"
+#include "../mapping/map_builder.h"
 
 // #include "../io/draw_trajectories.h"
 // #include "../io/file_handler.h"
@@ -25,6 +26,8 @@ extern "C" {
 typedef struct viam_carto {
     void *carto_obj;
 } viam_carto;
+
+typedef struct viam_carto_lib viam_carto_lib;
 
 // GetPositionResponse
 // https://github.com/viamrobotics/api/blob/main/proto/viam/service/slam/v1/slam.proto#L51
@@ -89,6 +92,10 @@ typedef enum viam_carto_LIDAR_CONFIG {
 #define VIAM_CARTO_VC_INVALID 2
 #define VIAM_CARTO_OUT_OF_MEMORY 3
 #define VIAM_CARTO_DESTRUCTOR_ERROR 4
+#define VIAM_CARTO_LIB_PLATFORM_INVALID 5
+#define VIAM_CARTO_LUA_CONFIG_NOT_FOUND 6
+#define VIAM_CARTO_SENSORS_LIST_EMPTY 7
+#define VIAM_CARTO_UNKNOWN_ERROR 8
 
 typedef struct viam_carto_algo_config {
     int optimize_every_n_nodes;
@@ -114,6 +121,12 @@ typedef struct viam_carto_config {
     viam_carto_MODE mode;
     viam_carto_LIDAR_CONFIG lidar_config;
 } viam_carto_config;
+
+extern int viam_carto_lib_init(viam_carto_lib **vcl  // OUT
+);
+
+extern int viam_carto_lib_terminate(viam_carto_lib **vcl  // OUT
+);
 
 // viam_carto_init/4 takes a null viam_carto pointer and a viam_carto_config, a
 // viam_carto_algo_config, and empty errmsg
@@ -300,6 +313,7 @@ config from_viam_carto_config(viam_carto_config vcc);
 class CartoFacade {
    public:
     CartoFacade(const viam_carto_config c, const viam_carto_algo_config ac);
+    int IOInit();
     // GetPosition returns the relative pose of the robot w.r.t the "origin"
     // of the map, which is the starting point from where the map was initially
     // created along with a component reference.
@@ -366,9 +380,9 @@ class CartoFacade {
     // double GetTranslationWeightFromMapBuilder();
     // double GetRotationWeightFromMapBuilder();
 
-    // std::string path_to_data;
-    // std::string path_to_map;
-    // std::string configuration_directory;
+    std::string path_to_data;
+    std::string path_to_internal_state;
+    std::string configuration_directory;
     // std::string config_params;
     // std::string port;
     // std::string camera_name;
@@ -405,8 +419,12 @@ class CartoFacade {
     // double rotation_weight = 1.0;
 
    private:
+    viam_carto_lib *lib;
     viam::carto_facade::config config;
     viam_carto_algo_config algo_config;
+    double data_cutoff_time = 0;
+    cartographer::mapping::TrajectoryBuilderInterface *trajectory_builder;
+    int trajectory_id;
     // moved from namespace
     // std::atomic<bool> b_continue_session;
     // StartSaveMap starts the map saving process in a separate thread.
