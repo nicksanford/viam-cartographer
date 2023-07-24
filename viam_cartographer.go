@@ -5,16 +5,13 @@ package viamcartographer
 import (
 	"bytes"
 	"context"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/edaniels/golog"
-	"github.com/golang/geo/r3"
 	"github.com/pkg/errors"
 	"go.opencensus.io/trace"
-	"go.uber.org/zap/zapcore"
 	viamgrpc "go.viam.com/rdk/grpc"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/slam"
@@ -28,8 +25,7 @@ import (
 
 // Model is the model name of cartographer.
 var (
-	Model    = resource.NewModel("viam", "slam", "cartographer")
-	cartoLib cartofacade.CartoLib
+	Model = resource.NewModel("viam", "slam", "cartographer")
 	// ErrClosed denotes that the slam service method was called on a closed slam resource.
 	ErrClosed = errors.Errorf("resource (%s) is closed", Model.String())
 )
@@ -47,22 +43,6 @@ const (
 	defaultCartoFacadeTimeout            = 5 * time.Second
 	chunkSizeBytes                       = 1 * 1024 * 1024
 )
-
-var defaultCartoAlgoCfg = cartofacade.CartoAlgoConfig{
-	OptimizeOnStart:      false,
-	OptimizeEveryNNodes:  3,
-	NumRangeData:         30,
-	MissingDataRayLength: 25.0,
-	MaxRange:             25.0,
-	MinRange:             0.2,
-	MaxSubmapsToKeep:     3,
-	FreshSubmapsCount:    3,
-	MinCoveredArea:       1.0,
-	MinAddedSubmapsCount: 1,
-	OccupiedSpaceWeight:  20.0,
-	TranslationWeight:    10.0,
-	RotationWeight:       1.0,
-}
 
 // SubAlgo defines the cartographer specific sub-algorithms that we support.
 type SubAlgo string
@@ -90,29 +70,6 @@ func init() {
 			)
 		},
 	})
-}
-
-// InitCartoLib is run to initialize the cartographer library
-// must be called before module.AddModelFromRegistry is
-// called.
-func InitCartoLib(logger golog.Logger) error {
-	minloglevel := 1 // warn
-	vlog := 0        //  disabled
-	if logger.Level() == zapcore.DebugLevel {
-		minloglevel = 0 // info
-		vlog = 1        // verbose enabled
-	}
-	lib, err := cartofacade.NewLib(minloglevel, vlog)
-	if err != nil {
-		return err
-	}
-	cartoLib = lib
-	return nil
-}
-
-// TerminateCartoLib is run to terminate the cartographer library.
-func TerminateCartoLib() error {
-	return cartoLib.Terminate()
 }
 
 func initSensorProcess(cancelCtx context.Context, cartoSvc *CartographerService) {
@@ -234,133 +191,11 @@ func New(
 	return cartoSvc, nil
 }
 
-func parseCartoAlgoConfig(configParams map[string]string, logger golog.Logger) (cartofacade.CartoAlgoConfig, error) {
-	cartoAlgoCfg := defaultCartoAlgoCfg
-	for k, val := range configParams {
-		switch k {
-		case "optimize_on_start":
-			if val == "true" {
-				cartoAlgoCfg.OptimizeOnStart = true
-			}
-		case "optimize_every_n_nodes":
-			iVal, err := strconv.Atoi(val)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.OptimizeEveryNNodes = iVal
-		case "num_range_data":
-			iVal, err := strconv.Atoi(val)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.NumRangeData = iVal
-		case "missing_data_ray_length":
-			fVal, err := strconv.ParseFloat(val, 32)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.MissingDataRayLength = float32(fVal)
-		case "max_range":
-			fVal, err := strconv.ParseFloat(val, 32)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.MaxRange = float32(fVal)
-		case "min_range":
-			fVal, err := strconv.ParseFloat(val, 32)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.MinRange = float32(fVal)
-		case "max_submaps_to_keep":
-			iVal, err := strconv.Atoi(val)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.MaxSubmapsToKeep = iVal
-		case "fresh_submaps_count":
-			iVal, err := strconv.Atoi(val)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.FreshSubmapsCount = iVal
-		case "min_covered_area":
-			fVal, err := strconv.ParseFloat(val, 64)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.MinCoveredArea = fVal
-		case "min_added_submaps_count":
-			iVal, err := strconv.Atoi(val)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.MinAddedSubmapsCount = iVal
-		case "occupied_space_weight":
-			fVal, err := strconv.ParseFloat(val, 64)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.OccupiedSpaceWeight = fVal
-		case "translation_weight":
-			fVal, err := strconv.ParseFloat(val, 64)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.TranslationWeight = fVal
-		case "rotation_weight":
-			fVal, err := strconv.ParseFloat(val, 64)
-			if err != nil {
-				return cartoAlgoCfg, err
-			}
-			cartoAlgoCfg.RotationWeight = fVal
-			// ignore mode as it is a special case
-		case "mode":
-		default:
-			logger.Warnf("unused config param: %s: %s", k, val)
-		}
-	}
-	return cartoAlgoCfg, nil
-}
-
 // initCartoFacade
 // 1. creates a new initCartoFacade
 // 2. initializes it and starts it
 // 3. terminates it if start fails.
 func initCartoFacade(ctx context.Context, cartoSvc *CartographerService) error {
-	cartoAlgoConfig, err := parseCartoAlgoConfig(cartoSvc.configParams, cartoSvc.logger)
-	if err != nil {
-		return err
-	}
-
-	cartoCfg := cartofacade.CartoConfig{
-		Sensors:            cartoSvc.sensors,
-		MapRateSecond:      cartoSvc.mapRateSec,
-		DataDir:            cartoSvc.dataDirectory,
-		ComponentReference: cartoSvc.primarySensorName,
-		LidarConfig:        cartofacade.TwoD,
-	}
-
-	cf := cartofacade.New(&cartoLib, cartoCfg, cartoAlgoConfig)
-	slamMode, err := cf.Initialize(ctx, cartoSvc.cartoFacadeTimeout, &cartoSvc.cartoFacadeWorkers)
-	if err != nil {
-		cartoSvc.logger.Errorw("cartofacade initialize failed", "error", err)
-		return err
-	}
-	err = cf.Start(ctx, cartoSvc.cartoFacadeTimeout)
-	if err != nil {
-		cartoSvc.logger.Errorw("cartofacade start failed", "error", err)
-		termErr := cf.Terminate(ctx, cartoSvc.cartoFacadeTimeout)
-		if termErr != nil {
-			cartoSvc.logger.Errorw("cartofacade terminate failed", "error", termErr)
-			return termErr
-		}
-		return err
-	}
-
-	cartoSvc.cartofacade = &cf
-	cartoSvc.SlamMode = slamMode
-
 	return nil
 }
 
@@ -419,51 +254,14 @@ type CartographerService struct {
 // GetPosition forwards the request for positional data to the slam library's gRPC service. Once a response is received,
 // it is unpacked into a Pose and a component reference string.
 func (cartoSvc *CartographerService) GetPosition(ctx context.Context) (spatialmath.Pose, string, error) {
-	ctx, span := trace.StartSpan(ctx, "viamcartographer::CartographerService::GetPosition")
-	defer span.End()
-	if cartoSvc.closed {
-		cartoSvc.logger.Warn("GetPosition called after closed")
-		return nil, "", ErrClosed
-	}
-
-	pos, err := cartoSvc.cartofacade.GetPosition(ctx, cartoSvc.cartoFacadeTimeout)
-	if err != nil {
-		return nil, "", err
-	}
-
-	pose := spatialmath.NewPoseFromPoint(r3.Vector{X: pos.X, Y: pos.Y, Z: pos.Z})
-	returnedExt := map[string]interface{}{
-		"quat": map[string]interface{}{
-			"real": pos.Real,
-			"imag": pos.Imag,
-			"jmag": pos.Jmag,
-			"kmag": pos.Kmag,
-		},
-	}
-	return CheckQuaternionFromClientAlgo(pose, cartoSvc.primarySensorName, returnedExt)
+	return nil, "", nil
 }
 
 // GetPointCloudMap creates a request, recording the time, calls the slam algorithms GetPointCloudMap endpoint and returns a callback
 // function which will return the next chunk of the current pointcloud map.
 // If startup is in localization mode, the timestamp is NOT updated.
 func (cartoSvc *CartographerService) GetPointCloudMap(ctx context.Context) (func() ([]byte, error), error) {
-	ctx, span := trace.StartSpan(ctx, "viamcartographer::CartographerService::GetPointCloudMap")
-	defer span.End()
-
-	if cartoSvc.closed {
-		cartoSvc.logger.Warn("GetPointCloudMap called after closed")
-		return nil, ErrClosed
-	}
-
-	if cartoSvc.SlamMode != cartofacade.LocalizingMode {
-		cartoSvc.mapTimestamp = time.Now().UTC()
-	}
-
-	pc, err := cartoSvc.cartofacade.GetPointCloudMap(ctx, cartoSvc.cartoFacadeTimeout)
-	if err != nil {
-		return nil, err
-	}
-	return toChunkedFunc(pc), nil
+	return nil, ErrClosed
 }
 
 // GetInternalState creates a request, calls the slam algorithms GetInternalState endpoint and returns a callback

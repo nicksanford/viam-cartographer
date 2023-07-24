@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"github.com/edaniels/golog"
@@ -11,6 +12,7 @@ import (
 	"go.viam.com/utils"
 
 	viamcartographer "github.com/viamrobotics/viam-cartographer"
+	"github.com/viamrobotics/viam-cartographer/cartofacade"
 )
 
 // Versioning variables which are replaced by LD flags.
@@ -37,19 +39,13 @@ func mainWithArgs(ctx context.Context, args []string, logger golog.Logger) error
 		logger.Info(viamcartographer.Model.String() + " built from source; version unknown")
 	}
 
+	if cartofacade.Hi() == 0 {
+		log.Fatal("impossible")
+	}
+
 	if len(args) == 2 && strings.HasSuffix(args[1], "-version") {
 		return nil
 	}
-
-	if err := viamcartographer.InitCartoLib(logger); err != nil {
-		return err
-	}
-
-	defer func() {
-		if err := viamcartographer.TerminateCartoLib(); err != nil {
-			logger.Errorw("failed to terminate carto lib", "error", err)
-		}
-	}()
 
 	// Instantiate the module
 	cartoModule, err := module.NewModuleFromArgs(ctx, logger)

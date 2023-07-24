@@ -4,12 +4,11 @@ package cartofacade
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
-
-	"go.uber.org/multierr"
 )
+
+type SlamMode int64
 
 var emptyRequestParams = map[RequestParamType]interface{}{}
 
@@ -18,49 +17,21 @@ var ErrUnableToAcquireLock = errors.New("VIAM_CARTO_UNABLE_TO_ACQUIRE_LOCK")
 
 // Initialize calls into the cartofacade C code.
 func (cf *CartoFacade) Initialize(ctx context.Context, timeout time.Duration, activeBackgroundWorkers *sync.WaitGroup) (SlamMode, error) {
-	cf.startCGoroutine(ctx, activeBackgroundWorkers)
-	untyped, err := cf.request(ctx, initialize, emptyRequestParams, timeout)
-	if err != nil {
-		return UnknownMode, err
-	}
-
-	carto, ok := untyped.(Carto)
-	if !ok {
-		return UnknownMode, errors.New("unable to cast response from cartofacade to a carto struct")
-	}
-
-	cf.carto = &carto
-
-	return carto.SlamMode, nil
+	return 1, nil
 }
 
 // Start calls into the cartofacade C code.
 func (cf *CartoFacade) Start(ctx context.Context, timeout time.Duration) error {
-	_, err := cf.request(ctx, start, emptyRequestParams, timeout)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
 // Stop calls into the cartofacade C code.
 func (cf *CartoFacade) Stop(ctx context.Context, timeout time.Duration) error {
-	_, err := cf.request(ctx, stop, emptyRequestParams, timeout)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
 // Terminate calls into the cartofacade C code.
 func (cf *CartoFacade) Terminate(ctx context.Context, timeout time.Duration) error {
-	_, err := cf.request(ctx, terminate, emptyRequestParams, timeout)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -72,63 +43,24 @@ func (cf *CartoFacade) AddSensorReading(
 	currentReading []byte,
 	readingTimestamp time.Time,
 ) error {
-	requestParams := map[RequestParamType]interface{}{
-		sensor:    sensorName,
-		reading:   currentReading,
-		timestamp: readingTimestamp,
-	}
-
-	_, err := cf.request(ctx, addSensorReading, requestParams, timeout)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
+type GetPosition struct{}
+
 // GetPosition calls into the cartofacade C code.
 func (cf *CartoFacade) GetPosition(ctx context.Context, timeout time.Duration) (GetPosition, error) {
-	untyped, err := cf.request(ctx, position, emptyRequestParams, timeout)
-	if err != nil {
-		return GetPosition{}, err
-	}
-
-	pos, ok := untyped.(GetPosition)
-	if !ok {
-		return GetPosition{}, errors.New("unable to cast response from cartofacade to a position info struct")
-	}
-
-	return pos, nil
+	return GetPosition{}, nil
 }
 
 // GetInternalState calls into the cartofacade C code.
 func (cf *CartoFacade) GetInternalState(ctx context.Context, timeout time.Duration) ([]byte, error) {
-	untyped, err := cf.request(ctx, internalState, emptyRequestParams, timeout)
-	if err != nil {
-		return []byte{}, err
-	}
-
-	internalState, ok := untyped.([]byte)
-	if !ok {
-		return []byte{}, errors.New("unable to cast response from cartofacade to a byte slice")
-	}
-
-	return internalState, nil
+	return []byte{}, nil
 }
 
 // GetPointCloudMap calls into the cartofacade C code.
 func (cf *CartoFacade) GetPointCloudMap(ctx context.Context, timeout time.Duration) ([]byte, error) {
-	untyped, err := cf.request(ctx, pointCloudMap, emptyRequestParams, timeout)
-	if err != nil {
-		return []byte{}, err
-	}
-
-	pointCloud, ok := untyped.([]byte)
-	if !ok {
-		return []byte{}, errors.New("unable to cast response from cartofacade to a byte slice")
-	}
-
-	return pointCloud, nil
+	return []byte{}, errors.New("unable to cast response from cartofacade to a byte slice")
 }
 
 // RequestType defines the carto C API call that is being made.
@@ -176,11 +108,6 @@ CartoFacade exists to ensure that only one go routine is calling into the CGO ap
 go runtime doesn't spawn multiple OS threads, which would harm performance.
 */
 type CartoFacade struct {
-	cartoLib        CartoLibInterface
-	carto           CartoInterface
-	cartoConfig     CartoConfig
-	cartoAlgoConfig CartoAlgoConfig
-	requestChan     chan Request
 }
 
 // RequestInterface defines the functionality of a Request.
@@ -248,103 +175,6 @@ type Request struct {
 }
 
 // New instantiates the Cartofacade struct which limits calls into C.
-func New(cartoLib CartoLibInterface, cartoCfg CartoConfig, cartoAlgoCfg CartoAlgoConfig) CartoFacade {
-	return CartoFacade{
-		carto:           &Carto{},
-		cartoLib:        cartoLib,
-		cartoConfig:     cartoCfg,
-		cartoAlgoConfig: cartoAlgoCfg,
-		requestChan:     make(chan Request),
-	}
-}
-
-// DoWork provides the logic to call the correct cgo functions with the correct input.
-// It should not be called outside of this package but needs to be public for testing purposes.
-func (r *Request) doWork(
-	cf *CartoFacade,
-) (interface{}, error) {
-	switch r.requestType {
-	case initialize:
-		return NewCarto(cf.cartoConfig, cf.cartoAlgoConfig, cf.cartoLib)
-	case start:
-		return nil, cf.carto.start()
-	case stop:
-		return nil, cf.carto.stop()
-	case terminate:
-		return nil, cf.carto.terminate()
-	case addSensorReading:
-		sensor, ok := r.requestParams[sensor].(string)
-		if !ok {
-			return nil, errors.New("could not cast inputted sensor name to string")
-		}
-
-		reading, ok := r.requestParams[reading].([]byte)
-		if !ok {
-			return nil, errors.New("could not cast inputted byte to byte slice")
-		}
-
-		timestamp, ok := r.requestParams[timestamp].(time.Time)
-		if !ok {
-			return nil, errors.New("could not cast inputted timestamp to times.Time")
-		}
-
-		return nil, cf.carto.addSensorReading(sensor, reading, timestamp)
-	case position:
-		return cf.carto.getPosition()
-	case internalState:
-		return cf.carto.getInternalState()
-	case pointCloudMap:
-		return cf.carto.getPointCloudMap()
-	}
-	return nil, fmt.Errorf("no worktype found for: %v", r.requestType)
-}
-
-// request wraps calls into C. This function requires the caller to know which RequestTypes requires casting to which response values.
-func (cf *CartoFacade) request(
-	ctxParent context.Context,
-	requestType RequestType,
-	inputs map[RequestParamType]interface{},
-	timeout time.Duration,
-) (interface{}, error) {
-	ctx, cancel := context.WithTimeout(ctxParent, timeout)
-	defer cancel()
-
-	req := Request{
-		responseChan:  make(chan Response, 1),
-		requestType:   requestType,
-		requestParams: inputs,
-	}
-
-	// wait until work can call into C (and timeout if needed)
-	select {
-	case cf.requestChan <- req:
-		select {
-		case response := <-req.responseChan:
-			return response.result, response.err
-		case <-ctx.Done():
-			msg := "timeout has occurred while trying to read request from cartofacade"
-			return nil, multierr.Combine(errors.New(msg), ctx.Err())
-		}
-	case <-ctx.Done():
-		msg := "timeout has occurred while trying to write request to cartofacade. Did you forget to call Start()?"
-		return nil, multierr.Combine(errors.New(msg), ctx.Err())
-	}
-}
-
-// startCGoroutine starts the background goroutine that is responsible for ensuring only one call into C is being made at a time.
-func (cf *CartoFacade) startCGoroutine(ctx context.Context, activeBackgroundWorkers *sync.WaitGroup) {
-	activeBackgroundWorkers.Add(1)
-	go func() {
-		defer activeBackgroundWorkers.Done()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case workToDo := <-cf.requestChan:
-				result, err := workToDo.doWork(cf)
-				workToDo.responseChan <- Response{result: result, err: err}
-			}
-		}
-	}()
+func New() CartoFacade {
+	return CartoFacade{}
 }
